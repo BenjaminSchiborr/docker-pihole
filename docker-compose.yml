@@ -1,0 +1,90 @@
+version: "2.4"
+
+services:
+  curl-root:
+    container_name: curl-root
+    command:
+      - "https://www.internic.net/domain/named.root"
+      - "-o"
+      - "/tmp/named.root"
+    image: curlimages/curl:latest
+    volumes:
+      - "./config/unbound:/tmp"
+    networks:
+      pihole_net:
+        ipv4_address: 10.0.0.4
+
+  unbound-anchor:
+    container_name: unbound-anchor
+    entrypoint:
+      - "unbound-anchor"
+      - "-a"
+      - "/opt/unbound/etc/unbound/root.key"
+    image: klutchell/unbound:amd64
+    volumes:
+      - "./config/unbound:/opt/unbound/etc/unbound"
+    networks:
+      pihole_net:
+        ipv4_address: 10.0.0.5
+
+  unbound:
+    container_name: unbound
+    image: klutchell/unbound:amd64
+    restart: unless-stopped
+    ports:
+      - "5053:5053/tcp"
+      - "5053:5053/udp"
+    volumes:
+      - "./config/unbound:/opt/unbound/etc/unbound"
+      - unbound_cache:/var/db/nscd
+    networks:
+      pihole_net:
+        ipv4_address: 10.0.0.2
+    depends_on:
+      - unbound-anchor
+      - curl-root
+
+  pi-hole:
+    container_name: pi-hole
+    image: pihole/pihole:latest
+    restart: unless-stopped
+    ports:
+      - "80:80/tcp"
+      - "53:53/tcp"
+      - "53:53/udp"
+      - "443:443/tcp"
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - ServerIP=10.0.0.3
+      - DNS1='10.0.0.2#5053'
+      - DNS2=''
+      - IPv6=false
+      - TZ='America/Los Angeles'
+      - DNSMASQ_LISTENING=all
+      - WEBPASSWORD=admin
+      - CONDITIONAL_FORWARDING=true
+      - CONDITIONAL_FORWARDING_IP=192.168.1.1
+      - CONDITIONAL_FORWARDING_DOMAIN=origin.cx
+      - CONDITIONAL_FORWARDING_REVERSE=1.1.168.192.in-addr.arpa
+    volumes:
+      - "./config/pihole:/etc/pihole"
+      - "./config/dnsmasq:/etc/dnsmasq.d"
+    networks:
+      pihole_net:
+        ipv4_address: 10.0.0.3
+    depends_on:
+      unbound:
+        condition: service_healthy
+    dns:
+      - 127.0.0.1
+
+networks:
+  pihole_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.0.0.0/29
+
+volumes:
+  unbound_cache:
